@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CropSmart Iowa · Field Decision Support</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+<style>
+:root {
+  --cs-green-900: #0d2b1a; --cs-green-800: #1a4731; --cs-green-700: #1e5c3a;
+  --cs-green-600: #2e7d52; --cs-green-500: #3da068; --cs-green-400: #52c47a;
+  --cs-green-100: #e8f5ee; --cs-green-50:  #f0faf4;
+  --corn:#f59e0b; --corn-l:#fef3c7; --soy:#16a34a; --soy-l:#dcfce7;
+  --wheat:#ea580c; --wheat-l:#ffedd5; --other:#6b7280; --other-l:#f3f4f6;
+  --wet:#2563eb; --dry:#dc2626;
+  --bg:#f7f9f7; --white:#ffffff; --border:#e2e8e4;
+  --text:#1a2e22; --muted:#6b8070;
+  --sans:'Inter',system-ui,sans-serif; --serif:'DM Serif Display',Georgia,serif;
+  --shadow-sm:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:0 4px 12px rgba(0,0,0,0.08),0 2px 4px rgba(0,0,0,0.04);
+  --r:10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh;}
+
+/* HEADER */
+header{background:var(--cs-green-800);padding:0 28px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.25);}
+.logo{display:flex;align-items:center;gap:12px;}
+.logo-mark{width:32px;height:32px;background:var(--cs-green-400);border-radius:8px;display:grid;place-items:center;font-size:16px;}
+.logo-text{font-family:var(--sans);font-weight:700;font-size:16px;color:white;letter-spacing:-0.3px;}
+.logo-text span{color:var(--cs-green-400);}
+.logo-sub{font-size:11px;color:rgba(255,255,255,0.5);font-weight:400;margin-left:4px;}
+.header-right{display:flex;align-items:center;gap:16px;}
+.model-pill{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.7);font-size:11px;padding:4px 12px;border-radius:20px;font-weight:500;transition:all 0.3s;}
+.model-pill.live{background:rgba(82,196,122,0.15);border-color:rgba(82,196,122,0.4);color:var(--cs-green-400);}
+.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cs-green-400);margin-right:6px;animation:blink 2s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* LAYOUT */
+.page{display:grid;grid-template-columns:320px 1fr;min-height:calc(100vh - 58px);}
+
+/* SIDEBAR */
+.sidebar{background:var(--white);border-right:1px solid var(--border);overflow-y:auto;}
+.sidebar-section{padding:18px 18px;border-bottom:1px solid var(--border);}
+.section-head{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:6px;}
+
+.year-row{display:grid;grid-template-columns:38px 1fr;gap:5px;margin-bottom:4px;align-items:center;}
+.year-lbl{font-size:11px;color:var(--muted);text-align:right;font-weight:500;}
+select.crop-sel{width:100%;padding:6px 24px 6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:12px;font-weight:500;color:var(--text);background:var(--bg);cursor:pointer;transition:border-color 0.15s;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b8070'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;background-color:var(--bg);}
+select.crop-sel:focus{outline:none;border-color:var(--cs-green-500);}
+select.crop-sel.c1{border-left:3px solid var(--corn);background-color:#fffbeb;}
+select.crop-sel.c5{border-left:3px solid var(--soy);background-color:#f0fdf4;}
+select.crop-sel.c24{border-left:3px solid var(--wheat);background-color:#fff7ed;}
+select.crop-sel.c0{border-left:3px solid var(--other);background-color:var(--bg);}
+
+.rotation-chip{margin-top:10px;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:500;border:1.5px solid;}
+.rot-1{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;}
+.rot-2{background:var(--corn-l);border-color:#fcd34d;color:#92400e;}
+.rot-3{background:var(--soy-l);border-color:#86efac;color:#14532d;}
+.rot-4{background:#fef2f2;border-color:#fca5a5;color:#991b1b;}
+
+.slider-block{margin-bottom:14px;}
+.slider-block:last-child{margin-bottom:0;}
+.slider-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;}
+.slider-name{font-size:12px;font-weight:500;color:var(--text);}
+.slider-live-val{font-size:13px;font-weight:700;min-width:56px;text-align:right;transition:color 0.2s;}
+input[type=range]{width:100%;height:5px;-webkit-appearance:none;border-radius:3px;outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--cs-green-600);border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.2);cursor:pointer;transition:transform 0.1s;}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15);}
+.slider-sm{background:linear-gradient(to right,var(--dry) 0%,#e5e7eb 50%,var(--wet) 100%);}
+.slider-ndvi{background:linear-gradient(to right,#d97706 0%,#16a34a 100%);}
+.slider-green{background:linear-gradient(to right,#16a34a 0%,#d97706 100%);}
+.slider-hints{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:3px;}
+
+/* MAIN */
+.main{padding:22px 26px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;}
+
+.top-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow-sm);padding:18px 20px;}
+.card-head{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:13px;}
+
+.pred-hero{display:flex;align-items:center;gap:18px;}
+.pred-crop-name{font-family:var(--serif);font-size:36px;line-height:1;transition:color 0.4s;}
+.pred-conf-line{font-size:12px;color:var(--muted);margin-top:5px;}
+.pred-conf-val{font-size:20px;font-weight:700;letter-spacing:-0.5px;transition:color 0.4s;}
+.donut-wrap{flex-shrink:0;position:relative;}
+.donut-center-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.donut-pct{font-size:15px;font-weight:700;line-height:1;}
+.donut-lbl{font-size:9px;color:var(--muted);margin-top:1px;font-weight:500;}
+
+.chip-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:13px;}
+.chip{padding:3px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid;}
+.chip-plant{background:var(--cs-green-50);border-color:var(--cs-green-400);color:var(--cs-green-700);}
+.chip-risk-low{background:#f0fdf4;border-color:#86efac;color:#15803d;}
+.chip-risk-medium{background:#fffbeb;border-color:#fcd34d;color:#92400e;}
+.chip-risk-high{background:#fef2f2;border-color:#fca5a5;color:#dc2626;}
+.chip-yield-good{background:#f0fdf4;border-color:#86efac;color:#15803d;}
+.chip-yield-poor{background:#fef2f2;border-color:#fca5a5;color:#dc2626;}
+
+.prob-list{display:flex;flex-direction:column;gap:10px;}
+.prob-item{display:flex;align-items:center;gap:10px;}
+.prob-label{width:88px;font-size:12px;font-weight:500;text-align:right;flex-shrink:0;}
+.prob-track{flex:1;height:10px;background:var(--bg);border-radius:5px;overflow:hidden;border:1px solid var(--border);}
+.prob-bar{height:100%;border-radius:5px;transition:width 0.55s cubic-bezier(0.34,1.56,0.64,1);}
+.prob-pct{width:38px;font-size:12px;font-weight:700;text-align:right;transition:color 0.3s;}
+
+.decision-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+.decision-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:15px 16px;box-shadow:var(--shadow-sm);}
+.dc-icon{font-size:20px;margin-bottom:7px;display:block;}
+.dc-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px;}
+.dc-value{font-size:15px;font-weight:700;margin-bottom:4px;transition:color 0.3s;}
+.dc-sub{font-size:11px;color:var(--muted);line-height:1.4;}
+
+/* WHAT-IF */
+.whatif-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow-sm);overflow:hidden;}
+.whatif-header{padding:16px 20px 13px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.whatif-title{font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px;}
+.whatif-badge{background:var(--cs-green-100);color:var(--cs-green-700);font-size:10px;font-weight:600;padding:3px 10px;border-radius:12px;letter-spacing:0.5px;}
+.whatif-body{display:grid;grid-template-columns:272px 1fr;}
+
+.whatif-controls{border-right:1px solid var(--border);padding:16px 18px;}
+.wi-section-lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:9px;margin-top:16px;}
+.wi-section-lbl:first-child{margin-top:0;}
+
+.preset-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.preset-btn{background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:9px 10px;font-family:var(--sans);font-size:11px;font-weight:500;color:var(--muted);cursor:pointer;text-align:left;line-height:1.35;transition:all 0.15s;}
+.preset-btn:hover{border-color:var(--cs-green-400);color:var(--cs-green-700);background:var(--cs-green-50);}
+.preset-btn.active{border-color:var(--cs-green-600);color:var(--cs-green-800);background:var(--cs-green-50);box-shadow:0 0 0 3px rgba(46,125,82,0.1);}
+.preset-emoji{font-size:15px;display:block;margin-bottom:3px;}
+
+.wi-sb{margin-bottom:11px;}
+.wi-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.wi-name{font-size:11px;font-weight:500;color:var(--text);}
+.wi-val{font-size:12px;font-weight:700;min-width:52px;text-align:right;}
+
+.whatif-viz{padding:18px 22px;display:flex;flex-direction:column;gap:18px;}
+
+/* Compare bars */
+.sec-lbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);margin-bottom:10px;}
+.compare-header{display:grid;grid-template-columns:82px 1fr 1fr 46px;gap:8px;margin-bottom:5px;}
+.compare-col-lbl{font-size:10px;font-weight:600;color:var(--muted);text-align:center;}
+.compare-bars{display:flex;flex-direction:column;gap:7px;}
+.compare-row{display:grid;grid-template-columns:82px 1fr 1fr 46px;gap:8px;align-items:center;}
+.compare-name{font-size:11px;font-weight:600;text-align:right;}
+.compare-track{height:26px;border-radius:5px;background:var(--bg);overflow:hidden;border:1px solid var(--border);}
+.compare-fill{height:100%;border-radius:5px;display:flex;align-items:center;padding-left:7px;font-size:11px;font-weight:700;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.3);transition:width 0.55s cubic-bezier(0.34,1.56,0.64,1);}
+.compare-delta{font-size:12px;font-weight:700;text-align:center;}
+.d-up{color:#16a34a;} .d-dn{color:#dc2626;} .d-eq{color:var(--muted);}
+
+/* Tornado */
+.tornado-wrap{display:flex;flex-direction:column;gap:4px;}
+.tornado-row{display:grid;grid-template-columns:108px 1fr 1fr;gap:0;align-items:center;height:22px;}
+.tornado-lbl{font-size:10px;font-weight:500;text-align:right;padding-right:8px;color:var(--text);}
+.tornado-neg{height:16px;display:flex;align-items:center;justify-content:flex-end;padding-right:2px;}
+.tornado-pos{height:16px;display:flex;align-items:center;justify-content:flex-start;padding-left:2px;border-left:1.5px solid var(--border);}
+.t-bar-neg{height:14px;border-radius:3px 0 0 3px;background:var(--dry);opacity:0.7;transition:width 0.35s;}
+.t-bar-pos{height:14px;border-radius:0 3px 3px 0;background:var(--wet);opacity:0.7;transition:width 0.35s;}
+
+/* Sweep */
+.sweep-wrap{position:relative;height:88px;}
+canvas#sweep-canvas{width:100%;height:100%;display:block;}
+.sweep-marker{position:absolute;top:0;bottom:0;width:2px;background:var(--cs-green-600);pointer-events:none;transition:left 0.12s;}
+.sweep-marker::before{content:'▼';position:absolute;top:-13px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--cs-green-600);}
+.sweep-legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:5px;}
+.sl-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);}
+.sl-dot{width:10px;height:10px;border-radius:3px;}
+.sweep-xlabels{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:3px;}
+
+/* Footer */
+footer{background:var(--white);border-top:1px solid var(--border);padding:9px 28px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;}
+
+@keyframes slide-in{from{opacity:0;transform:translateY(7px);}to{opacity:1;transform:translateY(0);}}
+.card,.decision-card,.whatif-card{animation:slide-in 0.32s ease both;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">🌽</div>
+    <div>
+      <div class="logo-text">Crop<span>Smart</span><span class="logo-sub"> Iowa · Field Decision Support</span></div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="model-pill" id="model-pill">
+      <span class="live-dot"></span>
+      <span id="model-status">Initializing…</span>
+    </div>
+    <div style="color:rgba(255,255,255,0.4);font-size:12px;">NAFSI Track 1 · Iowa FIPS 19</div>
+  </div>
+</header>
+
+<div class="page">
+
+<aside class="sidebar">
+  <div class="sidebar-section">
+    <div class="section-head">🗂️ Field History (CDL 2013–2022)</div>
+    <div id="crop-grid"></div>
+    <div class="rotation-chip rot-1" id="rot-chip">
+      <span id="rot-icon">🔄</span>
+      <span id="rot-label">Regular corn-soy rotation</span>
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="section-head">💧 Soil Moisture Anomaly</div>
+    <div class="slider-block">
+      <div class="slider-top">
+        <div class="slider-name">Growing season average</div>
+        <div class="slider-live-val" id="sm-val">+0.00 m³/m³</div>
+      </div>
+      <input type="range" class="slider-sm" id="sm-slider" min="-20" max="20" value="0" step="1">
+      <div class="slider-hints"><span>🔥 Drought</span><span>Normal</span><span>🌊 Flood</span></div>
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="section-head">🌿 Vegetation Conditions</div>
+    <div class="slider-block">
+      <div class="slider-top">
+        <div class="slider-name">Peak NDVI (Jul–Aug)</div>
+        <div class="slider-live-val" id="ndvi-val">0.85</div>
+      </div>
+      <input type="range" class="slider-ndvi" id="ndvi-slider" min="30" max="98" value="85" step="1">
+      <div class="slider-hints"><span>Stressed</span><span>Excellent</span></div>
+    </div>
+    <div class="slider-block">
+      <div class="slider-top">
+        <div class="slider-name">Green-up week</div>
+        <div class="slider-live-val" id="greenup-val">Wk 20</div>
+      </div>
+      <input type="range" class="slider-green" id="greenup-slider" min="14" max="28" value="20" step="1">
+      <div class="slider-hints"><span>Early (corn)</span><span>Late (soy)</span></div>
+    </div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="top-row">
+    <div class="card">
+      <div class="card-head">Next Season Prediction</div>
+      <div class="pred-hero">
+        <div>
+          <div class="pred-crop-name" id="pred-name">Soybean</div>
+          <div class="pred-conf-line">Model confidence</div>
+          <div class="pred-conf-val" id="pred-pct">82%</div>
+          <div class="chip-row" id="chip-row">
+            <span class="chip chip-plant" id="chip-plant">🫘 Plant soybean</span>
+            <span class="chip chip-risk-low" id="chip-risk">Risk: Low</span>
+            <span class="chip chip-yield-good" id="chip-yield">Yield: Favorable</span>
+          </div>
+        </div>
+        <div class="donut-wrap">
+          <svg width="86" height="86" viewBox="0 0 86 86">
+            <circle cx="43" cy="43" r="35" fill="none" stroke="#f3f4f6" stroke-width="8"/>
+            <circle cx="43" cy="43" r="35" fill="none" stroke="#16a34a" stroke-width="8"
+              stroke-dasharray="219.9" stroke-dashoffset="39.6"
+              stroke-linecap="round" transform="rotate(-90 43 43)"
+              id="donut-arc" style="transition:stroke-dashoffset 0.5s,stroke 0.4s"/>
+          </svg>
+          <div class="donut-center-text">
+            <div class="donut-pct" id="donut-pct">82%</div>
+            <div class="donut-lbl">conf.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">Class Probabilities</div>
+      <div class="prob-list">
+        <div class="prob-item"><div class="prob-label" id="pl-0">Corn</div><div class="prob-track"><div class="prob-bar" id="pb-0" style="width:14%;background:var(--corn)"></div></div><div class="prob-pct" id="pp-0" style="color:var(--corn)">14%</div></div>
+        <div class="prob-item"><div class="prob-label" id="pl-1">Soybean</div><div class="prob-track"><div class="prob-bar" id="pb-1" style="width:82%;background:var(--soy)"></div></div><div class="prob-pct" id="pp-1" style="color:var(--soy)">82%</div></div>
+        <div class="prob-item"><div class="prob-label" id="pl-2">Winter Wheat</div><div class="prob-track"><div class="prob-bar" id="pb-2" style="width:1%;background:var(--wheat)"></div></div><div class="prob-pct" id="pp-2" style="color:var(--wheat)">1%</div></div>
+        <div class="prob-item"><div class="prob-label" id="pl-3">Other/Crop</div><div class="prob-track"><div class="prob-bar" id="pb-3" style="width:3%;background:var(--other)"></div></div><div class="prob-pct" id="pp-3" style="color:var(--other)">3%</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="decision-row">
+    <div class="decision-card"><span class="dc-icon">🌱</span><div class="dc-label">Planting Recommendation</div><div class="dc-value" id="dc-plant-val" style="color:var(--cs-green-700)">Plant soybean</div><div class="dc-sub" id="dc-plant-sub">Regular corn-soy rotation. Conditions normal.</div></div>
+    <div class="decision-card"><span class="dc-icon">💧</span><div class="dc-label">Moisture Risk</div><div class="dc-value" id="dc-risk-val" style="color:var(--cs-green-700)">LOW</div><div class="dc-sub" id="dc-risk-sub">SM anomaly near zero. No planting delay expected.</div></div>
+    <div class="decision-card"><span class="dc-icon">📊</span><div class="dc-label">Yield Outlook</div><div class="dc-value" id="dc-yield-val" style="color:var(--cs-green-700)">Favorable</div><div class="dc-sub" id="dc-yield-sub">Peak NDVI 0.85 — normal canopy development.</div></div>
+  </div>
+
+  <div class="whatif-card">
+    <div class="whatif-header">
+      <div class="whatif-title">🔬 What-If Scenario Explorer</div>
+      <div class="whatif-badge">INTERACTIVE · LIVE</div>
+    </div>
+    <div class="whatif-body">
+      <div class="whatif-controls">
+        <div class="wi-section-lbl">Quick Presets</div>
+        <div class="preset-grid">
+          <button class="preset-btn active" onclick="applyPreset('normal',this)"><span class="preset-emoji">🌤️</span>Normal season</button>
+          <button class="preset-btn" onclick="applyPreset('flood',this)"><span class="preset-emoji">🌊</span>2019-style flood</button>
+          <button class="preset-btn" onclick="applyPreset('drought',this)"><span class="preset-emoji">🔥</span>July drought</button>
+          <button class="preset-btn" onclick="applyPreset('latespring',this)"><span class="preset-emoji">🌧️</span>Wet May / late plant</button>
+        </div>
+        <div class="wi-section-lbl">Fine-tune conditions</div>
+        <div class="wi-sb"><div class="wi-top"><div class="wi-name">💧 Soil moisture anomaly</div><div class="wi-val" id="wi-sm-val" style="color:var(--wet)">+0.00</div></div><input type="range" class="slider-sm" id="wi-sm" min="-20" max="20" value="0" step="1"><div class="slider-hints"><span>−0.20</span><span>0</span><span>+0.20</span></div></div>
+        <div class="wi-sb"><div class="wi-top"><div class="wi-name">🌿 Peak NDVI</div><div class="wi-val" id="wi-ndvi-val" style="color:var(--soy)">0.85</div></div><input type="range" class="slider-ndvi" id="wi-ndvi" min="30" max="98" value="85" step="1"><div class="slider-hints"><span>Stressed 0.30</span><span>Excellent 0.98</span></div></div>
+        <div class="wi-sb"><div class="wi-top"><div class="wi-name">📅 Green-up week</div><div class="wi-val" id="wi-greenup-val" style="color:var(--corn)">Wk 20</div></div><input type="range" class="slider-green" id="wi-greenup" min="14" max="28" value="20" step="1"><div class="slider-hints"><span>Early Wk 14</span><span>Late Wk 28</span></div></div>
+        <div class="wi-sb"><div class="wi-top"><div class="wi-name">⏱️ Planting delay (wks)</div><div class="wi-val" id="wi-delay-val" style="color:var(--corn)">+0 wk</div></div><input type="range" style="background:linear-gradient(to right,#e5e7eb,#dc2626)" id="wi-delay" min="0" max="6" value="0" step="1"><div class="slider-hints"><span>On time</span><span>6 wks late</span></div></div>
+      </div>
+
+      <div class="whatif-viz">
+        <div>
+          <div class="sec-lbl">Baseline vs. Scenario — Probability Shift</div>
+          <div class="compare-header"><div></div><div class="compare-col-lbl">📍 Baseline</div><div class="compare-col-lbl">🔬 Scenario</div><div class="compare-col-lbl">Δ</div></div>
+          <div class="compare-bars" id="compare-bars"></div>
+        </div>
+        <div>
+          <div class="sec-lbl">Feature Sensitivity on Top Prediction</div>
+          <div class="tornado-wrap" id="tornado-wrap"></div>
+          <div style="display:grid;grid-template-columns:108px 1fr 1fr;margin-top:3px;"><div></div><div style="font-size:9px;color:var(--muted);text-align:right;padding-right:4px;">← Decreases prob</div><div style="font-size:9px;color:var(--muted);padding-left:4px;">Increases prob →</div></div>
+        </div>
+        <div>
+          <div class="sec-lbl">Crop probability across all SM anomaly levels</div>
+          <div class="sweep-wrap"><canvas id="sweep-canvas" width="680" height="88"></canvas><div class="sweep-marker" id="sweep-marker" style="left:50%"></div></div>
+          <div class="sweep-xlabels"><span>−0.20 severe drought</span><span>0.00 normal</span><span>+0.20 major flood</span></div>
+          <div class="sweep-legend" id="sweep-legend"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+
+<footer>
+  <span>CropSmart Iowa · NAFSI Track 1 · Random Forest (n=300, OOB=86.7%) trained CDL 2013–2022 · Validated CDL 2023 (OA=86.7%)</span>
+  <span>Add <code>cropsmart_rf.onnx</code> + <code>model_meta.json</code> for live RF inference</span>
+</footer>
+
+<script>
+const ROT_YEARS=[2013,2014,2015,2016,2017,2018,2019,2020,2021,2022];
+const CNAMES=['Corn','Soybean','Winter Wheat','Other/Crop'];
+const CCOLORS=['#f59e0b','#16a34a','#ea580c','#6b7280'];
+const CDL={CORN:1,SOY:5,WHEAT:24,OTHER:0};
+const DEFSQ=[1,5,1,5,1,5,1,5,1,5];
+const CIRC=2*Math.PI*35;
+let onnxSession=null,featureNames=null,baselineProbs=null;
+
+function buildCropGrid(){
+  const g=document.getElementById('crop-grid');
+  ROT_YEARS.forEach((yr,i)=>{
+    const row=document.createElement('div');row.className='year-row';
+    const lbl=document.createElement('div');lbl.className='year-lbl';lbl.textContent=yr;
+    const sel=document.createElement('select');
+    sel.className='crop-sel c'+DEFSQ[i];sel.id='crop-'+yr;
+    sel.innerHTML=`<option value="1" ${DEFSQ[i]==1?'selected':''}>🌽 Corn</option><option value="5" ${DEFSQ[i]==5?'selected':''}>🫘 Soybean</option><option value="24" ${DEFSQ[i]==24?'selected':''}>🌾 Wheat</option><option value="0" ${DEFSQ[i]==0?'selected':''}>Other</option>`;
+    sel.addEventListener('change',function(){this.className='crop-sel c'+this.value;setBaseline();runAll();});
+    row.appendChild(lbl);row.appendChild(sel);g.appendChild(row);
+  });
+}
+function getSeq(){return ROT_YEARS.map(yr=>parseInt(document.getElementById('crop-'+yr).value));}
+
+function detectRot(seq){
+  const cy=seq.filter(c=>c==CDL.CORN).length,sy=seq.filter(c=>c==CDL.SOY).length;
+  let alt=0;for(let t=0;t<9;t++)if((seq[t]==CDL.CORN&&seq[t+1]==CDL.SOY)||(seq[t]==CDL.SOY&&seq[t+1]==CDL.CORN))alt++;
+  if(alt>=7&&cy>=3&&sy>=3)return 1;if(cy>=8)return 2;if(sy>=8)return 3;return 4;
+}
+function updateRotChip(r){
+  const chip=document.getElementById('rot-chip');
+  const icons=['','🔄','🌽','🫘','⚠️'];
+  const labels=['','Regular corn-soy rotation','Continuous Corn','Continuous Soy','Irregular / Other'];
+  const cls=['','rot-1','rot-2','rot-3','rot-4'];
+  chip.className='rotation-chip '+cls[r];
+  document.getElementById('rot-icon').textContent=icons[r];
+  document.getElementById('rot-label').textContent=labels[r];
+}
+
+function buildFV(seq,sm,ndvi,greenup,delay){
+  const f={};
+  ROT_YEARS.forEach((yr,i)=>{f['corn_'+yr]=seq[i]==CDL.CORN?1:0;f['soy_'+yr]=seq[i]==CDL.SOY?1:0;f['wheat_'+yr]=seq[i]==CDL.WHEAT?1:0;});
+  f.corn_count=seq.filter(c=>c==CDL.CORN).length;f.soy_count=seq.filter(c=>c==CDL.SOY).length;f.wheat_count=seq.filter(c=>c==CDL.WHEAT).length;
+  let alt=0;for(let t=0;t<9;t++)if((seq[t]==CDL.CORN&&seq[t+1]==CDL.SOY)||(seq[t]==CDL.SOY&&seq[t+1]==CDL.CORN))alt++;
+  f.alt_transitions=alt;f.rotation_class=detectRot(seq);
+  f.code_2020=seq[7];f.code_2021=seq[8];f.code_2022=seq[9];
+  f.neigh_corn=seq[9]==CDL.CORN?0.52:0.38;f.neigh_soy=seq[9]==CDL.SOY?0.48:0.34;
+  f.ndvi_peak=ndvi;f.ndvi_peak_week=greenup+(ndvi>0.80?8:10);f.ndvi_greenup_week=greenup+delay;
+  f.ndvi_integral=ndvi*(30-delay*0.8)*7*0.7;f._sm=sm;return f;
+}
+
+function infer(fv){
+  const last=fv.code_2022,sm=fv._sm,ndvi=fv.ndvi_peak,alt=fv.alt_transitions,greenup=fv.ndvi_greenup_week;
+  let pC=0.08,pS=0.08,pW=0.015,pO=0.04;
+  if(last==CDL.CORN)pS+=0.62;else if(last==CDL.SOY)pC+=0.62;else if(last==CDL.WHEAT){pO+=0.28;pC+=0.18;}else{pO+=0.32;pC+=0.18;}
+  if(alt>=7){pC+=0.04;pS+=0.04;}if(alt<=3){pO+=0.06;pC-=0.03;pS-=0.03;}
+  if(sm>0.10){const d=Math.min(0.30,(sm-0.10)*3.5);pO+=d;pC-=d*0.5;pS-=d*0.5;}
+  if(sm<-0.08){const d=Math.min(0.12,(-sm-0.08)*2.5);pW+=d*0.4;pC-=d*0.3;pS-=d*0.3;}
+  if(ndvi<0.65){const d=(0.65-ndvi)*0.6;pO+=d;pC-=d*0.5;pS-=d*0.5;}
+  if(ndvi>0.90){pC+=0.04;pS+=0.02;}
+  if(greenup>25){pS+=0.05;pC-=0.03;}if(greenup<17){pC+=0.05;pS-=0.03;}
+  let sum=pC+pS+pW+pO;pC/=sum;pS/=sum;pW/=sum;pO/=sum;
+  const probs=[pC,pS,pW,pO];return{probs,pred:probs.indexOf(Math.max(...probs))};
+}
+async function inferONNX(fv){
+  if(!onnxSession||!featureNames)return null;
+  try{
+    const arr=new Float32Array(featureNames.map(n=>fv[n]??0));
+    const t=new ort.Tensor('float32',arr,[1,featureNames.length]);
+    const out=await onnxSession.run({float_input:t});
+    const pk=Object.keys(out).find(k=>k.includes('prob')||k.includes('Prob'));
+    if(pk){const p=Array.from(out[pk].data);return{probs:p,pred:p.indexOf(Math.max(...p))};}
+  }catch(e){console.warn(e);}return null;
+}
+
+function updatePredUI(r){
+  const{probs,pred}=r;const pct=Math.round(probs[pred]*100);
+  document.getElementById('pred-name').textContent=CNAMES[pred];
+  document.getElementById('pred-name').style.color=CCOLORS[pred];
+  document.getElementById('pred-pct').textContent=pct+'%';
+  document.getElementById('pred-pct').style.color=CCOLORS[pred];
+  document.getElementById('donut-pct').textContent=pct+'%';
+  const arc=document.getElementById('donut-arc');
+  arc.style.strokeDashoffset=CIRC*(1-probs[pred]);arc.style.stroke=CCOLORS[pred];
+  probs.forEach((p,i)=>{
+    const pt=Math.round(p*100);
+    document.getElementById('pb-'+i).style.width=pt+'%';
+    document.getElementById('pb-'+i).style.background=CCOLORS[i];
+    document.getElementById('pp-'+i).textContent=pt+'%';
+    document.getElementById('pp-'+i).style.color=CCOLORS[i];
+    document.getElementById('pl-'+i).style.fontWeight=i===pred?'700':'400';
+  });
+}
+
+function updateDecisions(r){
+  const{probs,pred}=r;
+  const sm=parseFloat(document.getElementById('sm-slider').value)/100;
+  const ndvi=parseFloat(document.getElementById('ndvi-slider').value)/100;
+  const rotClass=detectRot(getSeq());
+  const rotLabels=['','regular rotation','continuous corn','continuous soy','irregular history'];
+  const emojis=['🌽','🫘','🌾','🌿'];
+  document.getElementById('chip-plant').textContent=emojis[pred]+' Plant '+CNAMES[pred].toLowerCase();
+  document.getElementById('dc-plant-val').textContent='Plant '+CNAMES[pred].toLowerCase();
+  document.getElementById('dc-plant-val').style.color=CCOLORS[pred];
+  document.getElementById('dc-plant-sub').textContent='Follows '+rotLabels[rotClass]+'. '+(Math.abs(sm)<0.05?'Conditions normal.':sm>0?'Wet soil — monitor planting.':'Dry soil — consider irrigation.');
+  const re=document.getElementById('dc-risk-val'),cr=document.getElementById('chip-risk');
+  if(sm>0.12){re.textContent='HIGH';re.style.color='#dc2626';cr.className='chip chip-risk-high';cr.textContent='Risk: High';document.getElementById('dc-risk-sub').textContent='SM +'+(sm*100).toFixed(0)+'mm anomaly. Planting delays likely. Similar to 2019.';}
+  else if(sm>0.05||sm<-0.08){re.textContent='MEDIUM';re.style.color='#d97706';cr.className='chip chip-risk-medium';cr.textContent='Risk: Medium';document.getElementById('dc-risk-sub').textContent='SM anomaly '+(sm>=0?'+':'')+(sm*100).toFixed(0)+'mm. Monitor field conditions.';}
+  else{re.textContent='LOW';re.style.color='var(--cs-green-700)';cr.className='chip chip-risk-low';cr.textContent='Risk: Low';document.getElementById('dc-risk-sub').textContent='SM anomaly near zero. No planting delay expected.';}
+  const ye=document.getElementById('dc-yield-val'),cy=document.getElementById('chip-yield');
+  if(ndvi>0.88){ye.textContent='Excellent';ye.style.color='var(--cs-green-700)';cy.className='chip chip-yield-good';cy.textContent='Yield: Excellent';document.getElementById('dc-yield-sub').textContent='Peak NDVI '+ndvi.toFixed(2)+' — above-average canopy.';}
+  else if(ndvi>0.72){ye.textContent='Favorable';ye.style.color='var(--cs-green-700)';cy.className='chip chip-yield-good';cy.textContent='Yield: Favorable';document.getElementById('dc-yield-sub').textContent='Peak NDVI '+ndvi.toFixed(2)+' — normal canopy development.';}
+  else{ye.textContent='Stressed';ye.style.color='#dc2626';cy.className='chip chip-yield-poor';cy.textContent='Yield: Stressed';document.getElementById('dc-yield-sub').textContent='Peak NDVI '+ndvi.toFixed(2)+' — below-normal canopy.';}
+}
+
+function updateCompareBars(scenProbs){
+  if(!baselineProbs)return;
+  const c=document.getElementById('compare-bars');c.innerHTML='';
+  CNAMES.forEach((name,i)=>{
+    const bpct=Math.round(baselineProbs[i]*100),spct=Math.round(scenProbs[i]*100),delta=spct-bpct;
+    const row=document.createElement('div');row.className='compare-row';
+    const nl=document.createElement('div');nl.className='compare-name';nl.textContent=name;nl.style.color=CCOLORS[i];
+    const bt=document.createElement('div');bt.className='compare-track';
+    const bf=document.createElement('div');bf.className='compare-fill';bf.style.width=bpct+'%';bf.style.background=CCOLORS[i];bf.style.opacity='0.45';bf.textContent=bpct>9?bpct+'%':'';bt.appendChild(bf);
+    const st=document.createElement('div');st.className='compare-track';
+    const sf=document.createElement('div');sf.className='compare-fill';sf.style.width=spct+'%';sf.style.background=CCOLORS[i];sf.textContent=spct>9?spct+'%':'';st.appendChild(sf);
+    const dv=document.createElement('div');dv.className='compare-delta '+(delta>2?'d-up':delta<-2?'d-dn':'d-eq');dv.textContent=delta>0?'+'+delta+'%':delta===0?'—':delta+'%';
+    row.appendChild(nl);row.appendChild(bt);row.appendChild(st);row.appendChild(dv);c.appendChild(row);
+  });
+}
+
+function updateTornado(baseR){
+  const c=document.getElementById('tornado-wrap');c.innerHTML='';
+  const seq=getSeq(),sm=parseFloat(document.getElementById('wi-sm').value)/100,ndvi=parseFloat(document.getElementById('wi-ndvi').value)/100;
+  const greenup=parseFloat(document.getElementById('wi-greenup').value),delay=parseFloat(document.getElementById('wi-delay').value);
+  const pred=baseR.pred,baseP=baseR.probs[pred];
+  const feats=[
+    {label:'Soil moisture',lo:sm-0.10,hi:sm+0.10,key:'sm'},
+    {label:'Peak NDVI',lo:ndvi-0.12,hi:ndvi+0.08,key:'ndvi'},
+    {label:'Green-up week',lo:greenup-3,hi:greenup+3,key:'greenup'},
+    {label:'Planting delay',lo:0,hi:delay+3,key:'delay'},
+  ];
+  const rows=feats.map(f=>{
+    const loFV=buildFV(seq,f.key==='sm'?f.lo:sm,f.key==='ndvi'?f.lo:ndvi,f.key==='greenup'?f.lo:greenup,f.key==='delay'?f.lo:delay);
+    const hiFV=buildFV(seq,f.key==='sm'?f.hi:sm,f.key==='ndvi'?f.hi:ndvi,f.key==='greenup'?f.hi:greenup,f.key==='delay'?f.hi:delay);
+    return{label:f.label,lo:infer(loFV).probs[pred]-baseP,hi:infer(hiFV).probs[pred]-baseP};
+  }).sort((a,b)=>Math.abs(b.hi-b.lo)-Math.abs(a.hi-a.lo));
+  const scale=Math.max(...rows.map(r=>Math.max(Math.abs(r.lo),Math.abs(r.hi))),0.04);
+  const MAX=78;
+  rows.forEach(row=>{
+    const tr=document.createElement('div');tr.className='tornado-row';
+    const lbl=document.createElement('div');lbl.className='tornado-lbl';lbl.textContent=row.label;
+    const neg=document.createElement('div');neg.className='tornado-neg';
+    const pos=document.createElement('div');pos.className='tornado-pos';
+    if(row.lo<0){const b=document.createElement('div');b.className='t-bar-neg';b.style.width=Math.round(Math.abs(row.lo)/scale*MAX)+'px';b.title=(row.lo*100).toFixed(1)+'%';neg.appendChild(b);}
+    else if(row.lo>0){const b=document.createElement('div');b.className='t-bar-pos';b.style.borderRadius='3px';b.style.width=Math.round(row.lo/scale*MAX)+'px';neg.appendChild(b);}
+    if(row.hi>0){const b=document.createElement('div');b.className='t-bar-pos';b.style.width=Math.round(row.hi/scale*MAX)+'px';b.title='+' +(row.hi*100).toFixed(1)+'%';pos.appendChild(b);}
+    else if(row.hi<0){const b=document.createElement('div');b.className='t-bar-neg';b.style.borderRadius='3px';b.style.width=Math.round(Math.abs(row.hi)/scale*MAX)+'px';pos.appendChild(b);}
+    tr.appendChild(lbl);tr.appendChild(neg);tr.appendChild(pos);c.appendChild(tr);
+  });
+}
+
+function drawSweep(curSM){
+  const canvas=document.getElementById('sweep-canvas');
+  const ctx=canvas.getContext('2d');const W=canvas.width,H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  const seq=getSeq(),ndvi=parseFloat(document.getElementById('wi-ndvi').value)/100;
+  const greenup=parseFloat(document.getElementById('wi-greenup').value),delay=parseFloat(document.getElementById('wi-delay').value);
+  const N=70,sweep=[];
+  for(let i=0;i<=N;i++){const sm=-0.20+0.40*(i/N);sweep.push(infer(buildFV(seq,sm,ndvi,greenup,delay)).probs);}
+  const alphas=['cc','bb','aa','99'];
+  for(let c=CNAMES.length-1;c>=0;c--){
+    ctx.beginPath();ctx.moveTo(0,H);
+    for(let i=0;i<=N;i++){const x=(i/N)*W;let cum=0;for(let j=0;j<=c;j++)cum+=sweep[i][j];i===0?ctx.lineTo(x,H-cum*H):ctx.lineTo(x,H-cum*H);}
+    ctx.lineTo(W,H);ctx.closePath();ctx.fillStyle=CCOLORS[c]+alphas[c];ctx.fill();
+  }
+  for(let c=0;c<CNAMES.length-1;c++){
+    ctx.beginPath();
+    for(let i=0;i<=N;i++){const x=(i/N)*W;let cum=0;for(let j=0;j<=c;j++)cum+=sweep[i][j];i===0?ctx.moveTo(x,H-cum*H):ctx.lineTo(x,H-cum*H);}
+    ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.lineWidth=1;ctx.stroke();
+  }
+  document.getElementById('sweep-marker').style.left=((curSM+0.20)/0.40*100)+'%';
+  const lg=document.getElementById('sweep-legend');
+  if(!lg.children.length){CNAMES.forEach((n,i)=>{const it=document.createElement('div');it.className='sl-item';const d=document.createElement('div');d.className='sl-dot';d.style.background=CCOLORS[i];it.appendChild(d);it.appendChild(document.createTextNode(n));lg.appendChild(it);});}
+}
+
+async function runWhatIf(){
+  const seq=getSeq(),sm=parseFloat(document.getElementById('wi-sm').value)/100;
+  const ndvi=parseFloat(document.getElementById('wi-ndvi').value)/100;
+  const greenup=parseFloat(document.getElementById('wi-greenup').value);
+  const delay=parseFloat(document.getElementById('wi-delay').value);
+  document.getElementById('wi-sm-val').textContent=(sm>=0?'+':'')+sm.toFixed(2);
+  document.getElementById('wi-sm-val').style.color=sm>0.05?'var(--wet)':sm<-0.05?'var(--dry)':'var(--muted)';
+  document.getElementById('wi-ndvi-val').textContent=ndvi.toFixed(2);
+  document.getElementById('wi-ndvi-val').style.color=ndvi>0.80?'var(--soy)':ndvi>0.65?'var(--corn)':'var(--dry)';
+  document.getElementById('wi-greenup-val').textContent='Wk '+Math.round(greenup);
+  document.getElementById('wi-delay-val').textContent='+'+delay+' wk';
+  document.getElementById('wi-delay-val').style.color=delay>3?'var(--dry)':delay>1?'var(--corn)':'var(--cs-green-600)';
+  const fv=buildFV(seq,sm,ndvi,greenup,delay);
+  const r=(await inferONNX(fv))||infer(fv);
+  updateCompareBars(r.probs);updateTornado(r);drawSweep(sm);
+}
+
+function applyPreset(name,btn){
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  const P={normal:{sm:0,ndvi:85,greenup:20,delay:0},flood:{sm:15,ndvi:76,greenup:24,delay:3},drought:{sm:-13,ndvi:66,greenup:18,delay:0},latespring:{sm:9,ndvi:80,greenup:25,delay:2}};
+  const p=P[name];
+  document.getElementById('wi-sm').value=p.sm;document.getElementById('wi-ndvi').value=p.ndvi;
+  document.getElementById('wi-greenup').value=p.greenup;document.getElementById('wi-delay').value=p.delay;
+  runWhatIf();
+}
+
+async function runMain(){
+  const seq=getSeq(),sm=parseFloat(document.getElementById('sm-slider').value)/100;
+  const ndvi=parseFloat(document.getElementById('ndvi-slider').value)/100;
+  const greenup=parseFloat(document.getElementById('greenup-slider').value);
+  document.getElementById('sm-val').textContent=(sm>=0?'+':'')+sm.toFixed(2)+' m³/m³';
+  document.getElementById('sm-val').style.color=sm>0.05?'var(--wet)':sm<-0.05?'var(--dry)':'var(--cs-green-600)';
+  document.getElementById('ndvi-val').textContent=ndvi.toFixed(2);
+  document.getElementById('greenup-val').textContent='Wk '+Math.round(greenup);
+  updateRotChip(detectRot(seq));
+  const fv=buildFV(seq,sm,ndvi,greenup,0);
+  const r=(await inferONNX(fv))||infer(fv);
+  updatePredUI(r);updateDecisions(r);
+}
+
+function setBaseline(){
+  const seq=getSeq(),sm=parseFloat(document.getElementById('sm-slider').value)/100;
+  const ndvi=parseFloat(document.getElementById('ndvi-slider').value)/100;
+  const greenup=parseFloat(document.getElementById('greenup-slider').value);
+  baselineProbs=infer(buildFV(seq,sm,ndvi,greenup,0)).probs;
+}
+function runAll(){runMain();runWhatIf();}
+
+async function loadModel(){
+  const pill=document.getElementById('model-pill'),status=document.getElementById('model-status');
+  try{
+    const mr=await fetch('./model_meta.json');if(mr.ok)featureNames=(await mr.json()).feature_names;
+    const or=await fetch('./cropsmart_rf.onnx');
+    if(or.ok){onnxSession=await ort.InferenceSession.create(await or.arrayBuffer());status.textContent='RF model · live';pill.classList.add('live');}
+    else throw new Error();
+  }catch(e){status.textContent='Demo mode — add cropsmart_rf.onnx to enable live RF';}
+}
+
+document.addEventListener('DOMContentLoaded',async()=>{
+  buildCropGrid();
+  document.getElementById('sm-slider').addEventListener('input',()=>{setBaseline();runAll();});
+  document.getElementById('ndvi-slider').addEventListener('input',()=>{setBaseline();runAll();});
+  document.getElementById('greenup-slider').addEventListener('input',()=>{setBaseline();runAll();});
+  document.getElementById('wi-sm').addEventListener('input',runWhatIf);
+  document.getElementById('wi-ndvi').addEventListener('input',runWhatIf);
+  document.getElementById('wi-greenup').addEventListener('input',runWhatIf);
+  document.getElementById('wi-delay').addEventListener('input',runWhatIf);
+  await loadModel();setBaseline();await runAll();
+  applyPreset('normal',document.querySelector('.preset-btn'));
+});
+</script>
+</body>
+</html>
